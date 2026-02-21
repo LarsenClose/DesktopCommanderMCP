@@ -74,7 +74,7 @@ class ToolHistory {
         try {
           records.push(JSON.parse(line));
         } catch (e) {
-          // Silently skip invalid lines
+          console.debug('Skipping invalid tool history line:', e);
         }
       }
 
@@ -86,7 +86,7 @@ class ToolHistory {
         this.trimHistoryFile();
       }
     } catch (error) {
-      // Silently fail
+      console.debug('Failed to load tool history from disk:', error);
     }
   }
 
@@ -102,7 +102,7 @@ class ToolHistory {
       const lines = keepEntries.map(entry => JSON.stringify(entry)).join('\n') + '\n';
       fs.writeFileSync(this.historyFile, lines, 'utf-8');
     } catch (error) {
-      // Silently fail
+      console.debug('Failed to trim tool history file:', error);
     }
   }
 

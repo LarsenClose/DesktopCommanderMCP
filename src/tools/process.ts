@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import os from 'os';
 import { ProcessInfo, ServerResult } from '../types.js';
 import { KillProcessArgsSchema } from './schemas.js';
+import { terminalManager } from '../terminal-manager.js';
 
 const execAsync = promisify(exec);
 
@@ -49,9 +50,21 @@ export async function killProcess(args: unknown): Promise<ServerResult> {
   }
 
   try {
-    process.kill(parsed.data.pid);
+    // Only allow killing processes started by this server
+    const pid = parsed.data.pid;
+    const sessions = terminalManager.listActiveSessions();
+    const completedSessions = terminalManager.listCompletedSessions();
+    const isManagedPid = sessions.some(s => s.pid === pid) || completedSessions.some(s => s.pid === pid);
+    if (!isManagedPid) {
+      return {
+        content: [{ type: "text", text: `Error: Can only kill processes started by this server. PID ${pid} is not a managed process.` }],
+        isError: true,
+      };
+    }
+
+    process.kill(pid);
     return {
-      content: [{ type: "text", text: `Successfully terminated process ${parsed.data.pid}` }],
+      content: [{ type: "text", text: `Successfully terminated process ${pid}` }],
     };
   } catch (error) {
     return {

@@ -25,6 +25,7 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
   };
   private originalStdoutWrite: typeof process.stdout.write;
   private isInitialized: boolean = false;
+  private static readonly MAX_BUFFER = 1000;
   private messageBuffer: Array<{
     level: "emergency" | "alert" | "critical" | "error" | "warning" | "notice" | "info" | "debug";
     args: any[];
@@ -128,12 +129,13 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
       if (this.isInitialized) {
         this.sendLogNotification("info", args);
       } else {
-        // Buffer for later replay to client
-        this.messageBuffer.push({
-          level: "info",
-          args,
-          timestamp: Date.now()
-        });
+        if (this.messageBuffer.length < FilteredStdioServerTransport.MAX_BUFFER) {
+          this.messageBuffer.push({
+            level: "info",
+            args,
+            timestamp: Date.now()
+          });
+        }
       }
     };
 
@@ -141,11 +143,13 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
       if (this.isInitialized) {
         this.sendLogNotification("info", args);
       } else {
-        this.messageBuffer.push({
-          level: "info",
-          args,
-          timestamp: Date.now()
-        });
+        if (this.messageBuffer.length < FilteredStdioServerTransport.MAX_BUFFER) {
+          this.messageBuffer.push({
+            level: "info",
+            args,
+            timestamp: Date.now()
+          });
+        }
       }
     };
 
@@ -153,11 +157,13 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
       if (this.isInitialized) {
         this.sendLogNotification("warning", args);
       } else {
-        this.messageBuffer.push({
-          level: "warning",
-          args,
-          timestamp: Date.now()
-        });
+        if (this.messageBuffer.length < FilteredStdioServerTransport.MAX_BUFFER) {
+          this.messageBuffer.push({
+            level: "warning",
+            args,
+            timestamp: Date.now()
+          });
+        }
       }
     };
 
@@ -165,11 +171,13 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
       if (this.isInitialized) {
         this.sendLogNotification("error", args);
       } else {
-        this.messageBuffer.push({
-          level: "error",
-          args,
-          timestamp: Date.now()
-        });
+        if (this.messageBuffer.length < FilteredStdioServerTransport.MAX_BUFFER) {
+          this.messageBuffer.push({
+            level: "error",
+            args,
+            timestamp: Date.now()
+          });
+        }
       }
     };
 
@@ -177,11 +185,13 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
       if (this.isInitialized) {
         this.sendLogNotification("debug", args);
       } else {
-        this.messageBuffer.push({
-          level: "debug",
-          args,
-          timestamp: Date.now()
-        });
+        if (this.messageBuffer.length < FilteredStdioServerTransport.MAX_BUFFER) {
+          this.messageBuffer.push({
+            level: "debug",
+            args,
+            timestamp: Date.now()
+          });
+        }
       }
     };
   }
@@ -206,11 +216,13 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
             this.sendLogNotification("info", [buffer.replace(/\n$/, '')]);
           } else {
             // Buffer for later replay to client
-            this.messageBuffer.push({
-              level: "info",
-              args: [buffer.replace(/\n$/, '')],
-              timestamp: Date.now()
-            });
+            if (this.messageBuffer.length < FilteredStdioServerTransport.MAX_BUFFER) {
+              this.messageBuffer.push({
+                level: "info",
+                args: [buffer.replace(/\n$/, '')],
+                timestamp: Date.now()
+              });
+            }
           }
           if (callback) callback();
           return true;
@@ -288,11 +300,13 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
     // Buffer messages before initialization to avoid breaking MCP protocol
     // MCP requires client to send first message - server cannot write to stdout before that
     if (!this.isInitialized) {
-      this.messageBuffer.push({
-        level,
-        args: [data ? { message, ...data } : message],
-        timestamp: Date.now()
-      });
+      if (this.messageBuffer.length < FilteredStdioServerTransport.MAX_BUFFER) {
+        this.messageBuffer.push({
+          level,
+          args: [data ? { message, ...data } : message],
+          timestamp: Date.now()
+        });
+      }
       return;
     }
     

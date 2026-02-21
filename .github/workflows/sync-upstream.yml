@@ -1,0 +1,140 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: '17 6 * * *'  # Daily at 06:17 UTC
+  workflow_dispatch:  # Manual trigger
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/wonderwhy-er/DesktopCommanderMCP.git
+          git fetch upstream main
+
+      - name: Check if behind upstream
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count HEAD..upstream/main)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          if [ "$BEHIND" = "0" ]; then
+            echo "Already up to date with upstream"
+          else
+            echo "Behind upstream by $BEHIND commits"
+          fi
+
+      - name: Attempt merge
+        if: steps.check.outputs.behind != '0'
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create a temporary branch for the merge
+          git checkout -b sync-upstream-temp
+
+          if git merge upstream/main --no-edit; then
+            echo "merge_success=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "merge_success=false" >> "$GITHUB_OUTPUT"
+            git merge --abort
+          fi
+
+      - name: Install and build
+        if: steps.merge.outputs.merge_success == 'true'
+        id: build
+        run: |
+          npm ci --ignore-scripts
+          if npm run build; then
+            echo "build_success=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build_success=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run tests
+        if: steps.build.outputs.build_success == 'true'
+        id: test
+        run: |
+          if node test/run-all-tests.js; then
+            echo "test_success=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "test_success=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push to main
+        if: steps.test.outputs.test_success == 'true'
+        run: |
+          git checkout main
+          git merge sync-upstream-temp --no-edit
+          git push origin main
+
+      - name: Create issue on failure
+        if: |
+          steps.check.outputs.behind != '0' && (
+            steps.merge.outputs.merge_success == 'false' ||
+            steps.build.outputs.build_success == 'false' ||
+            steps.test.outputs.test_success == 'false'
+          )
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'Upstream sync failed';
+            const mergeOk = '${{ steps.merge.outputs.merge_success }}' === 'true';
+            const buildOk = '${{ steps.build.outputs.build_success }}' === 'true';
+            const testOk = '${{ steps.test.outputs.test_success }}' === 'true';
+
+            let reason = 'Unknown';
+            if (!mergeOk) reason = 'Merge conflict';
+            else if (!buildOk) reason = 'Build failed after merge';
+            else if (!testOk) reason = 'Tests failed after merge';
+
+            const body = `## Upstream Sync Failure\n\n` +
+              `**Reason:** ${reason}\n` +
+              `**Behind upstream by:** ${{ steps.check.outputs.behind }} commits\n` +
+              `**Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\n\n` +
+              `Manual intervention required to resolve.`;
+
+            // Check for existing open issue
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'upstream-sync',
+              state: 'open'
+            });
+
+            if (issues.data.length > 0) {
+              // Update existing issue
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues.data[0].number,
+                body: body
+              });
+            } else {
+              // Create new issue
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['upstream-sync']
+              });
+            }

@@ -54,17 +54,17 @@ function resolveAbsolutePath(filePath: string): string {
 }
 
 /**
- * Helper function to check if path contains an error
+ * Helper function to check if an error is a timeout error
  */
-function isErrorPath(filePath: string): boolean {
-    return filePath.startsWith('__ERROR__:');
+function isTimeoutError(error: unknown): boolean {
+    return error instanceof Error && error.message.includes('timed out');
 }
 
 /**
- * Extract error message from error path
+ * Extract error message from an error object
  */
-function getErrorFromPath(path: string): string {
-    return path.substring('__ERROR__:'.length).trim();
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
 }
 
 /**

@@ -440,15 +440,18 @@ export class RemoteChannel {
 
             const result = spawnSync('node', [
                 scriptPath,
-                deviceId,
-                supabaseUrl,
-                supabaseKey,
-                sessionData.session.access_token,
-                sessionData.session.refresh_token || ''
+                deviceId
             ], {
                 timeout: 3000,
-                stdio: 'pipe', // Capture output to prevent blocking
-                encoding: 'utf-8'
+                stdio: 'pipe',
+                encoding: 'utf-8',
+                env: {
+                    ...process.env,
+                    SUPABASE_URL: supabaseUrl,
+                    SUPABASE_KEY: supabaseKey,
+                    ACCESS_TOKEN: sessionData.session.access_token,
+                    REFRESH_TOKEN: sessionData.session.refresh_token || ''
+                }
             });
 
             console.debug('[DEBUG] spawnSync completed, exit code:', result.status, 'signal:', result.signal);

@@ -4,6 +4,9 @@ import { getSystemInfo } from '../utils/system-info.js';
 import { currentClient } from '../server.js';
 import { featureFlagManager } from '../utils/feature-flags.js';
 
+// Security-critical config keys that cannot be modified via MCP tool
+const PROTECTED_KEYS = new Set(['blockedCommands', 'allowedDirectories', 'defaultShell']);
+
 /**
  * Get the entire config including system information
  */
@@ -68,6 +71,18 @@ export async function setConfigValue(args: unknown) {
         content: [{
           type: "text",
           text: `Invalid arguments: ${parsed.error}`
+        }],
+        isError: true
+      };
+    }
+
+    // Block modification of security-critical settings via MCP
+    if (PROTECTED_KEYS.has(parsed.data.key)) {
+      console.error(`Rejected attempt to modify protected config key: ${parsed.data.key}`);
+      return {
+        content: [{
+          type: "text",
+          text: `Cannot modify security-critical setting '${parsed.data.key}' via MCP tool. Edit the config file directly.`
         }],
         isError: true
       };

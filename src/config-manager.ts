@@ -185,7 +185,24 @@ class ConfigManager {
    */
   async setValue(key: string, value: any): Promise<void> {
     await this.init();
-    
+
+    // Type-validate known config keys
+    if (key === 'blockedCommands' || key === 'allowedDirectories') {
+      if (!Array.isArray(value) || !value.every(item => typeof item === 'string')) {
+        throw new Error(`Config key '${key}' requires an array of strings`);
+      }
+    }
+    if (key === 'defaultShell') {
+      if (typeof value !== 'string') {
+        throw new Error(`Config key '${key}' requires a string value`);
+      }
+    }
+    if (key === 'telemetryEnabled') {
+      if (typeof value !== 'boolean') {
+        throw new Error(`Config key '${key}' requires a boolean value`);
+      }
+    }
+
     // Special handling for telemetry opt-out
     if (key === 'telemetryEnabled' && value === false) {
       // Get the current value before changing it

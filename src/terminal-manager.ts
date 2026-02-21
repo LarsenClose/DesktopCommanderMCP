@@ -96,6 +96,8 @@ function getShellSpawnArgs(shellPath: string, command: string): ShellSpawnConfig
   };
 }
 
+const MAX_OUTPUT_LINES = 50000;
+
 export class TerminalManager {
   private sessions: Map<number, TerminalSession> = new Map();
   private completedSessions: Map<number, CompletedSession> = new Map();
@@ -217,6 +219,7 @@ export class TerminalManager {
 
     return new Promise((resolve) => {
       let resolved = false;
+      let promiseResolved = false;
       let periodicCheck: NodeJS.Timeout | null = null;
 
       // Quick prompt patterns for immediate detection
@@ -225,6 +228,7 @@ export class TerminalManager {
       const resolveOnce = (result: CommandExecutionResult) => {
         if (resolved) return;
         resolved = true;
+        promiseResolved = true;
         if (periodicCheck) clearInterval(periodicCheck);
 
         // Add timing info if requested
@@ -252,7 +256,9 @@ export class TerminalManager {
         if (!firstOutputTime) firstOutputTime = now;
         lastOutputTime = now;
 
-        output += text;
+        if (!promiseResolved) {
+          output += text;
+        }
         // Append to line-based buffer
         this.appendToLineBuffer(session, text);
 
@@ -291,7 +297,9 @@ export class TerminalManager {
         if (!firstOutputTime) firstOutputTime = now;
         lastOutputTime = now;
 
-        output += text;
+        if (!promiseResolved) {
+          output += text;
+        }
         // Append to line-based buffer
         this.appendToLineBuffer(session, text);
 
@@ -305,6 +313,17 @@ export class TerminalManager {
             snippet: text.slice(0, 50).replace(/\n/g, '\\n')
           });
         }
+      });
+
+      childProcess.on('error', (err: Error) => {
+        session.isBlocked = true;
+        exitReason = 'process_error';
+        if (periodicCheck) clearInterval(periodicCheck);
+        resolveOnce({
+          pid: childProcess.pid!,
+          output: output + `\nProcess error: ${err.message}`,
+          isBlocked: true
+        });
       });
 
       // Periodic comprehensive check every 100ms
@@ -387,6 +406,16 @@ export class TerminalManager {
       } else {
         // Subsequent lines - add as new lines
         session.outputLines.push(line);
+      }
+    }
+
+    // Cap output buffer to prevent unbounded memory growth
+    if (session.outputLines.length > MAX_OUTPUT_LINES) {
+      const excess = session.outputLines.length - MAX_OUTPUT_LINES;
+      session.outputLines.splice(0, excess);
+      // Adjust lastReadIndex if it pointed into the removed range
+      if (session.lastReadIndex > 0) {
+        session.lastReadIndex = Math.max(0, session.lastReadIndex - excess);
       }
     }
   }

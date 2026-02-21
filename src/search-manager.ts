@@ -7,6 +7,8 @@ import { getRipgrepPath } from './utils/ripgrep-resolver.js';
 import { isExcelFile } from './utils/files/index.js';
 import PizZip from 'pizzip';
 
+const MAX_RESULTS = 100000;
+
 export interface SearchResult {
   file: string;
   line?: number;
@@ -163,6 +165,7 @@ export interface SearchSessionOptions {
       ).then(excelResults => {
         // Add Excel results to session (merged after initial response)
         for (const result of excelResults) {
+          if (session.results.length >= MAX_RESULTS) break;
           session.results.push(result);
           session.totalMatches++;
         }
@@ -185,6 +188,7 @@ export interface SearchSessionOptions {
         options.filePattern
       ).then(docxResults => {
         for (const result of docxResults) {
+          if (session.results.length >= MAX_RESULTS) break;
           session.results.push(result);
           session.totalMatches++;
         }
@@ -350,7 +354,8 @@ export interface SearchSessionOptions {
     let regex: RegExp;
     try {
       regex = new RegExp(pattern, flags);
-    } catch {
+    } catch (e) {
+      console.debug('Invalid regex pattern for Excel search, falling back to literal:', e);
       // If pattern is not valid regex, escape it for literal matching
       const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       regex = new RegExp(escaped, flags);
@@ -471,8 +476,8 @@ export interface SearchSessionOptions {
             excelFiles.push(fullPath);
           }
         }
-      } catch {
-        // Skip directories we can't read
+      } catch (e) {
+        console.debug('Failed to read directory during Excel file search:', e);
       }
     }
 
@@ -484,8 +489,8 @@ export interface SearchSessionOptions {
       } else if (stats.isDirectory()) {
         await walk(rootPath);
       }
-    } catch {
-      // Path doesn't exist or can't be accessed
+    } catch (e) {
+      console.debug('Failed to access path for Excel file search:', e);
     }
 
     return excelFiles;
@@ -533,7 +538,8 @@ export interface SearchSessionOptions {
     let regex: RegExp;
     try {
       regex = new RegExp(pattern, flags);
-    } catch {
+    } catch (e) {
+      console.debug('Invalid regex pattern, falling back to literal:', e);
       const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       regex = new RegExp(escaped, flags);
     }
@@ -599,7 +605,8 @@ export interface SearchSessionOptions {
             }
           }
         }
-      } catch {
+      } catch (e) {
+        console.debug('Failed to read DOCX file:', e);
         continue;
       }
     }
@@ -627,7 +634,7 @@ export interface SearchSessionOptions {
             docxFiles.push(fullPath);
           }
         }
-      } catch { /* skip */ }
+      } catch (e) { console.debug('Failed to read directory during DOCX search:', e); }
     }
 
     try {
@@ -637,7 +644,7 @@ export interface SearchSessionOptions {
       } else if (stats.isDirectory()) {
         await walk(rootPath);
       }
-    } catch { /* skip */ }
+    } catch (e) { console.debug('Failed to access path for DOCX search:', e); }
 
     return docxFiles;
   }
@@ -671,6 +678,23 @@ export interface SearchSessionOptions {
         this.sessions.delete(sessionId);
       }
     }
+  }
+
+  /**
+   * Destroy the search manager - kill all active processes and clear state
+   * Used during server shutdown
+   */
+  destroy(): void {
+    for (const [sessionId, session] of this.sessions) {
+      if (!session.isComplete && !session.process.killed) {
+        try {
+          session.process.kill('SIGTERM');
+        } catch (e) {
+          // Best effort
+        }
+      }
+    }
+    this.sessions.clear();
   }
 
   /**
@@ -826,7 +850,10 @@ export interface SearchSessionOptions {
 
       // Store error text for potential user display, but don't capture individual errors
       // We'll capture incomplete search status in the completion event instead
-      session.error = (session.error || '') + errorText;
+      // Cap error string at 100KB to prevent memory growth
+      if ((session.error || '').length < 100000) {
+        session.error = (session.error || '') + errorText;
+      }
 
       // Filter meaningful errors
       const filteredErrors = errorText
@@ -847,7 +874,9 @@ export interface SearchSessionOptions {
       if (filteredErrors.length > 0) {
         const meaningfulErrors = filteredErrors.join('\n').trim();
         if (meaningfulErrors) {
-          session.error = (session.error || '') + meaningfulErrors + '\n';
+          if ((session.error || '').length < 100000) {
+            session.error = (session.error || '') + meaningfulErrors + '\n';
+          }
           capture('search_session_error', {
             sessionId: session.id,
             error: meaningfulErrors.substring(0, 200)
@@ -923,6 +952,15 @@ export interface SearchSessionOptions {
       
       const result = this.parseLine(line, session.options.searchType);
       if (result) {
+        if (session.results.length >= MAX_RESULTS) {
+          // Cap reached - kill the process and stop collecting
+          if (!session.process.killed) {
+            session.process.kill('SIGTERM');
+          }
+          session.isComplete = true;
+          session.error = (session.error || '') + `\nSearch results capped at ${MAX_RESULTS}`;
+          break;
+        }
         session.results.push(result);
         // Separate counting of matches vs context lines
         if (result.type === 'content' && line.includes('"type":"context"')) {
@@ -1021,5 +1059,15 @@ function startCleanupIfNeeded(): void {
     setTimeout(() => {
       searchManager.cleanupSessions();
     }, 1000);
+  }
+}
+
+/**
+ * Stop the cleanup interval - used during shutdown
+ */
+export function stopCleanup(): void {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
   }
 }

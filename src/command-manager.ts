@@ -228,6 +228,9 @@ class CommandManager {
 
     async validateCommand(command: string): Promise<boolean> {
         try {
+            // Strip newlines and null bytes to prevent command injection
+            command = command.replace(/[\n\r\0]/g, ' ');
+
             // Get blocked commands from config
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
@@ -252,9 +255,8 @@ class CommandManager {
             return true;
         } catch (error) {
             console.error('Error validating command:', error);
-            // If there's an error, default to allowing the command
-            // This is less secure but prevents blocking all commands due to config issues
-            return true;
+            // Fail closed: block commands when validation encounters errors
+            return false;
         }
     }
 }

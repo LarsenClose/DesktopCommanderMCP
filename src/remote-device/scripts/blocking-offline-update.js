@@ -4,17 +4,21 @@
  * Blocking script to update device status to offline
  * Runs synchronously during shutdown to ensure DB update completes
  * 
- * Usage: node blocking-offline-update.js <deviceId> <supabaseUrl> <supabaseKey> <accessToken> <refreshToken>
+ * Usage: SUPABASE_URL=... SUPABASE_KEY=... ACCESS_TOKEN=... REFRESH_TOKEN=... node blocking-offline-update.js <deviceId>
  */
 
 import { createClient } from '@supabase/supabase-js';
 
-// Parse command line arguments
-const [deviceId, supabaseUrl, supabaseKey, accessToken, refreshToken] = process.argv.slice(2);
+// Parse command line arguments and environment variables
+const [deviceId] = process.argv.slice(2);
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
+const accessToken = process.env.ACCESS_TOKEN;
+const refreshToken = process.env.REFRESH_TOKEN;
 
 if (!deviceId || !supabaseUrl || !supabaseKey || !accessToken || !refreshToken) {
-    console.error('❌ Missing required arguments');
-    console.error('Usage: node blocking-offline-update.js <deviceId> <supabaseUrl> <supabaseKey> <accessToken> <refreshToken>');
+    console.error('❌ Missing required arguments or environment variables');
+    console.error('Usage: SUPABASE_URL=... SUPABASE_KEY=... ACCESS_TOKEN=... REFRESH_TOKEN=... node blocking-offline-update.js <deviceId>');
     process.exit(1);
 }
 

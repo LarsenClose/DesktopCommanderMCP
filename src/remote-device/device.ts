@@ -9,6 +9,22 @@ import fs from 'fs/promises';
 import path from 'path';
 import { captureRemote } from '../utils/capture.js';
 
+// Allowlist of tools that can be invoked remotely
+// Security-sensitive tools (kill_process, set_config_value, get_config) are excluded
+const REMOTE_ALLOWED_TOOLS = new Set([
+  'read_file',
+  'write_file',
+  'edit_block',
+  'start_process',
+  'read_process_output',
+  'list_processes',
+  'search_code',
+  'search_files',
+  'list_directory',
+  'get_file_info',
+  'ping',
+]);
+
 export interface MCPDeviceOptions {
     persistSession?: boolean;
 }
@@ -264,15 +280,20 @@ export class MCPDevice {
         // Expect toolCall to include a device_id field used to route calls to this device instance.
         const { id: call_id, tool_name, tool_args, device_id, metadata = {} } = toolCall;
 
-        console.debug('[DEBUG] Tool call received, device_id:', device_id, 'this.deviceId:', this.deviceId);
-
-        // Only process jobs for this device
+        // Only process jobs for this device - check BEFORE logging args to prevent info leak
         if (device_id && device_id !== this.deviceId) {
             console.debug('[DEBUG] Ignoring tool call for different device');
             return;
         }
 
         console.log(`🔧 Received tool call ${call_id}: ${tool_name} ${JSON.stringify(tool_args)} metadata: ${JSON.stringify(metadata)}`);
+
+        // Check tool allowlist for remote access
+        if (tool_name !== 'ping' && tool_name !== 'shutdown' && !REMOTE_ALLOWED_TOOLS.has(tool_name)) {
+          console.log(`🚫 Tool '${tool_name}' is not allowed for remote execution`);
+          await this.remoteChannel.updateCallResult(call_id, 'failed', null, `Tool '${tool_name}' is not available for remote execution`);
+          return;
+        }
 
         try {
             // Update call status to executing

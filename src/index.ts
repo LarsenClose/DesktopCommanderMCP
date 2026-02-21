@@ -11,12 +11,43 @@ import { capture } from './utils/capture.js';
 import { logToStderr, logger } from './utils/logger.js';
 import { runRemote } from './npm-scripts/remote.js';
 import { ensureChromeAvailable } from './tools/pdf/markdown.js';
+import { terminalManager } from './terminal-manager.js';
+import { searchManager } from './search-manager.js';
 
 // Store messages to defer until after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
 function deferLog(level: string, message: string) {
   deferredMessages.push({ level, message });
 }
+
+async function cleanup() {
+  console.error('Cleanup: terminating active sessions...');
+  // Kill all active terminal sessions
+  for (const session of terminalManager.listActiveSessions()) {
+    try {
+      terminalManager.forceTerminate(session.pid);
+    } catch (e) {
+      // Best effort
+    }
+  }
+  // Clean up search sessions
+  try {
+    searchManager.cleanupSessions(0);
+  } catch (e) {
+    // Best effort
+  }
+  console.error('Cleanup complete.');
+}
+
+process.on('SIGTERM', async () => {
+  await cleanup();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  await cleanup();
+  process.exit(0);
+});
 
 async function runServer() {
   try {
