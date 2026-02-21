@@ -1,6 +1,8 @@
 import fs from "fs/promises";
 import path from "path";
 import os from 'os';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import fetch from 'cross-fetch';
 import { capture } from '../utils/capture.js';
 import { withTimeout } from '../utils/withTimeout.js';
@@ -269,6 +271,87 @@ type PdfPayload = {
 type FileResultPayloads = PdfPayload;
 
 /**
+ * Check if an IP address is in a private/internal network range
+ */
+function isPrivateIP(ip: string): boolean {
+  // IPv4 private ranges
+  if (net.isIPv4(ip)) {
+    const parts = ip.split('.').map(Number);
+    // 127.0.0.0/8 (loopback)
+    if (parts[0] === 127) return true;
+    // 10.0.0.0/8
+    if (parts[0] === 10) return true;
+    // 172.16.0.0/12
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    // 192.168.0.0/16
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    // 169.254.0.0/16 (link-local)
+    if (parts[0] === 169 && parts[1] === 254) return true;
+    // 0.0.0.0
+    if (parts[0] === 0) return true;
+    return false;
+  }
+
+  // IPv6 private ranges
+  if (net.isIPv6(ip)) {
+    const normalized = ip.toLowerCase();
+    // ::1 (loopback)
+    if (normalized === '::1' || normalized === '0000:0000:0000:0000:0000:0000:0000:0001') return true;
+    // fc00::/7 (unique local)
+    if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+    // fe80::/10 (link-local)
+    if (normalized.startsWith('fe80')) return true;
+    // :: (unspecified)
+    if (normalized === '::') return true;
+    return false;
+  }
+
+  return false;
+}
+
+/**
+ * Validate a URL for SSRF protection
+ * Rejects private/internal network addresses and non-HTTP(S) schemes
+ */
+async function validateUrlForSSRF(url: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid URL: ${url}`);
+  }
+
+  // Only allow http: and https: schemes
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`URL scheme '${parsed.protocol}' is not allowed. Only http: and https: are permitted.`);
+  }
+
+  // Resolve hostname to IP and check against private ranges
+  const hostname = parsed.hostname;
+
+  // Check if hostname is already an IP address
+  if (net.isIP(hostname)) {
+    if (isPrivateIP(hostname)) {
+      throw new Error('URL points to a private/internal network address');
+    }
+    return;
+  }
+
+  // Resolve DNS
+  try {
+    const { address } = await dns.lookup(hostname);
+    if (isPrivateIP(address)) {
+      throw new Error('URL points to a private/internal network address');
+    }
+  } catch (err: any) {
+    if (err.message === 'URL points to a private/internal network address') {
+      throw err;
+    }
+    // DNS resolution failure - let the fetch handle it
+  }
+}
+
+/**
  * Read file content from a URL
  * @param url URL to fetch content from
  * @returns File content or file result with metadata
@@ -282,6 +365,9 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
     const timeoutId = setTimeout(() => controller.abort(), FILE_OPERATION_TIMEOUTS.URL_FETCH);
 
     try {
+        // SSRF protection: validate URL scheme and target address
+        await validateUrlForSSRF(url);
+
         const response = await fetch(url, {
             signal: controller.signal
         });
